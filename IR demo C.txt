@@ -1,0 +1,102 @@
+#include <avr/io.h>
+#include <util/delay.h>
+#include <stdio.h>
+
+void initUSART();
+void transmitUSART(unsigned char data);
+void transmitStringUSART(const char* str);
+void initADC();
+uint16_t readADC(uint8_t channel);
+uint16_t readIRRangefinder();
+void delayMilliseconds(unsigned int ms);
+void initLED();
+void setLEDBrightness(uint8_t brightness);
+
+char buffer[50];
+
+int main(void) {
+    initUSART();
+    initADC();
+    initLED();
+
+    uint16_t distance;
+    uint16_t adcValue;
+
+    while (1) {
+        distance = readIRRangefinder();
+        adcValue = readADC(0);
+
+        snprintf(buffer, sizeof(buffer), "Distance: %d cm, ADC Value: %u\n", distance, adcValue);
+        transmitStringUSART(buffer);
+
+        if (distance <= 12) {
+            setLEDBrightness(0);
+            PORTB |= (1 << PB5); // Turn on onboard LED
+        } else if (distance >= 41) {
+            setLEDBrightness(255);
+            PORTB &= ~(1 << PB5); // Turn off onboard LED
+        } else {
+            uint8_t brightness = (uint8_t)((distance - 12) * 255 / 29);
+            setLEDBrightness(brightness);
+            PORTB &= ~(1 << PB5); // Turn off onboard LED
+        }
+
+        delayMilliseconds(500);
+    }
+}
+
+void initUSART() {
+    uint16_t ubrr = 103;
+    UBRR0H = (ubrr >> 8);
+    UBRR0L = ubrr;
+    UCSR0B = (1 << TXEN0);
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+void transmitUSART(unsigned char data) {
+    while (!(UCSR0A & (1 << UDRE0)));
+    UDR0 = data;
+}
+
+void transmitStringUSART(const char* str) {
+    while (*str) {
+        transmitUSART(*str++);
+    }
+}
+
+void initADC() {
+    ADMUX = (1 << REFS0);
+    ADCSRA = (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+    ADCSRA |= (1 << ADEN);
+}
+
+uint16_t readADC(uint8_t channel) {
+    ADMUX = (ADMUX & 0xF0) | (channel & 0x0F);
+    ADCSRA |= (1 << ADSC);
+    while (ADCSRA & (1 << ADSC));
+    return ADC;
+}
+
+uint16_t readIRRangefinder() {
+    uint16_t adcValue = readADC(0);
+    if (adcValue == 0) return 0;
+    uint16_t distance = 4800 / (adcValue - 20);
+    return distance;
+}
+
+void delayMilliseconds(unsigned int ms) {
+    while (ms--) {
+        _delay_ms(1);
+    }
+}
+
+void initLED() {
+    DDRD |= (1 << DDD3);
+    DDRB |= (1 << PB5);
+}
+
+void setLEDBrightness(uint8_t brightness) {
+    TCCR0A = (1 << WGM00) | (1 << WGM01) | (1 << COM0B1);
+    TCCR0B = (1 << CS01);
+    OCR0B = brightness;
+}

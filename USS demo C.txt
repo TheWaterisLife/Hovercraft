@@ -1,0 +1,121 @@
+#include <avr/io.h>
+#include <util/delay.h>
+#include <stdio.h>
+
+const int LEDPIN = 13;
+
+void initUSART();
+void transmitUSART(unsigned char data);
+void transmitStringUSART(const char* str);
+void initUltrasonic();
+uint16_t readUltrasonic(uint32_t* pulseWidthUs);
+void delayMicroseconds(unsigned int us);
+void initPWM();
+void setLEDBrightness(uint8_t brightness);
+
+char buffer[50];
+
+int main(void) {
+    initUSART();
+    initUltrasonic();
+    initPWM();
+
+    uint16_t distance;
+    uint32_t pulseWidthUs;
+
+    while (1) {
+        distance = readUltrasonic(&pulseWidthUs);
+        uint32_t pulseWidthMs = pulseWidthUs / 1000;
+
+        snprintf(buffer, sizeof(buffer), "Distance: %d cm, Pulse Width: %lu us, %lu ms\n", distance, pulseWidthUs, pulseWidthMs);
+        transmitStringUSART(buffer);
+
+        if (distance <= 12) {
+            setLEDBrightness(0); 
+        } else if (distance >= 41) {
+            setLEDBrightness(255); 
+        } else {
+            uint8_t brightness = (uint8_t)((distance - 12) * 255 / (41 - 12));
+            setLEDBrightness(brightness);
+        }
+
+        _delay_ms(500);
+    }
+}
+
+void initUSART() {
+    uint16_t ubrr = 103;
+    UBRR0H = (ubrr >> 8);
+    UBRR0L = ubrr;
+    UCSR0B = (1 << TXEN0);
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+void transmitUSART(unsigned char data) {
+    while (!(UCSR0A & (1 << UDRE0)));
+    UDR0 = data;
+}
+
+void transmitStringUSART(const char* str) {
+    while (*str) {
+        transmitUSART(*str++);
+    }
+}
+
+void initUltrasonic() {
+    DDRB |= (1 << PB5);
+    DDRD &= ~(1 << PD3);
+}
+
+uint16_t readUltrasonic(uint32_t* pulseWidthUs) {
+    uint32_t count = 0;
+    uint32_t timeout;
+
+    PORTB &= ~(1 << PB5);
+    delayMicroseconds(2);
+    PORTB |= (1 << PB5);
+    delayMicroseconds(10);
+    PORTB &= ~(1 << PB5);
+
+    timeout = 60000;
+    while (!(PIND & (1 << PD3))) {
+        if (--timeout == 0) {
+            *pulseWidthUs = 0;
+            return 0;
+        }
+    }
+
+    count = 0;
+    timeout = 60000;
+    while (PIND & (1 << PD3)) {
+        _delay_us(1);
+        count++;
+        if (--timeout == 0) {
+            *pulseWidthUs = 0;
+            return 0;
+        }
+    }
+
+    snprintf(buffer, sizeof(buffer), "Raw count: %lu\n", count);
+    transmitStringUSART(buffer);
+
+    *pulseWidthUs = count;
+    uint16_t distance = (count / 2) / 29;
+    return distance;
+}
+
+void delayMicroseconds(unsigned int us) {
+    while (us--) {
+        _delay_us(1);
+    }
+}
+
+void initPWM() {
+    DDRB |= (1 << PB5);
+    TCCR0A = (1 << WGM00) | (1 << WGM01) | (1 << COM0B1);
+    TCCR0B = (1 << CS00);
+}
+
+void setLEDBrightness(uint8_t brightness) {
+    OCR0B = brightness;
+}
